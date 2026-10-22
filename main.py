@@ -1,9 +1,11 @@
 from textual.app import App, ComposeResult
 from textual.widget import Widget
+from textual.widgets import Static
 from time import perf_counter
 
 # game settings
-speed = 30.0
+speed = 16.0 * 3
+LANE_KEYS = {"d": 0, "f": 1, "j": 2, "k": 3}
 
 # chart settings
 notes = [
@@ -25,8 +27,18 @@ notes = [
 
 class Canvas(Widget):
     start = 0.0
+    can_focus = True
+    misses = 0
 
     def tick(self) -> None:
+        now = self.elapsed()
+        for note in notes:
+            if note["time"] + 1.5 / speed + 0.12 >= now:
+                break
+            if note.get("state") is not None:
+                continue
+            note["state"] = "missed"
+            self.misses += 1
         self.refresh()
 
     def on_mount(self) -> None:
@@ -49,7 +61,7 @@ class Canvas(Widget):
 
         # populate the grid
         for note in notes:
-            if note["time"] + (height - hit_line + 1) / speed < now:
+            if note["time"] + (height - hit_line + 1) / speed < now or note.get("state") == "hit":
                 continue
             if note["time"] > now + height / speed:
                 break
@@ -67,16 +79,27 @@ class Canvas(Widget):
         # return grid as a string
         return "\n".join("".join(r) for r in grid)
 
+    def on_key(self, event) -> None:
+        now = self.elapsed()
+        lane = LANE_KEYS.get(event.key)
+        if notes == [] or lane is None:
+            return
+        closest = min([d for d in notes if d.get("lane") == lane and d.get("state") != "hit"], key=lambda t: abs(t["time"] - now), default=None)
+        if not closest:
+            return
+        if abs(closest["time"] - now) <= (1.5 / speed) + 0.12:
+            closest["state"] = "hit"
+        
+
 
 class Game(App):
-
-    BINDINGS = []
     CSS = """
-
+    #hud { dock: top; height: 1; }
     """
 
     def compose(self) -> ComposeResult:
         yield Canvas()
+        yield Static(id="hud")
 
 
 if __name__ == "__main__":
