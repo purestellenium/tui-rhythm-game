@@ -2,6 +2,7 @@ from textual.app import App, ComposeResult
 from textual.widget import Widget
 from textual.widgets import Static
 from time import perf_counter
+from just_playback import Playback
 
 # game settings
 speed = 16.0 * 3
@@ -9,21 +10,30 @@ LANE_KEYS = {"d": 0, "f": 1, "j": 2, "k": 3}
 
 # chart settings
 notes = [
-    {"time": 1.0, "lane": 0}, {"time": 1.5, "lane": 1}, {"time": 2.0, "lane": 2}, {"time": 2.5, "lane": 3},
-    {"time": 3.0, "lane": 3}, {"time": 3.5, "lane": 2}, {"time": 4.0, "lane": 1}, {"time": 4.5, "lane": 0},
+    {"beat": 0, "lane": 0}, {"beat": 1, "lane": 1}, {"beat": 2, "lane": 2}, {"beat": 3, "lane": 3},
+    {"beat": 4, "lane": 3}, {"beat": 5, "lane": 2}, {"beat": 6, "lane": 1}, {"beat": 7, "lane": 0},
 
-    {"time": 5.0, "lane": 0}, {"time": 5.0, "lane": 3},
-    {"time": 5.5, "lane": 1}, {"time": 5.5, "lane": 2},
-    {"time": 6.0, "lane": 0}, {"time": 6.0, "lane": 3},
-    {"time": 6.5, "lane": 1}, {"time": 6.5, "lane": 2},
+    {"beat": 8, "lane": 0}, {"beat": 8, "lane": 3},
+    {"beat": 9, "lane": 1}, {"beat": 9, "lane": 2},
+    {"beat": 10, "lane": 0}, {"beat": 10, "lane": 3},
+    {"beat": 11, "lane": 1}, {"beat": 11, "lane": 2},
 
-    {"time": 7.0, "lane": 0}, {"time": 7.25, "lane": 1}, {"time": 7.5, "lane": 2}, {"time": 7.75, "lane": 3},
-    {"time": 8.0, "lane": 2}, {"time": 8.25, "lane": 1}, {"time": 8.5, "lane": 0},
+    {"beat": 12, "lane": 0}, {"beat": 12.5, "lane": 1}, {"beat": 13, "lane": 2}, {"beat": 13.5, "lane": 3},
+    {"beat": 14, "lane": 2}, {"beat": 14.5, "lane": 1}, {"beat": 15, "lane": 0},
 
-    {"time": 9.0, "lane": 1}, {"time": 9.25, "lane": 2}, {"time": 9.5, "lane": 1}, {"time": 9.75, "lane": 2},
+    {"beat": 16, "lane": 1}, {"beat": 16.5, "lane": 2}, {"beat": 17, "lane": 1}, {"beat": 17.5, "lane": 2},
 
-    {"time": 10.5, "lane": 0}, {"time": 10.5, "lane": 1}, {"time": 10.5, "lane": 2}, {"time": 10.5, "lane": 3},
+    {"beat": 19, "lane": 0}, {"beat": 19, "lane": 1}, {"beat": 19, "lane": 2}, {"beat": 19, "lane": 3},
 ]
+
+bpm = 174
+offset = 9.0
+start_at = 5.0
+
+# convert beatmap to seconds
+
+for note in notes:
+    note["time"] = offset + note["beat"] * 60 / bpm
 
 class Canvas(Widget):
     start = 0.0
@@ -44,9 +54,13 @@ class Canvas(Widget):
     def on_mount(self) -> None:
         self.start = perf_counter()
         self.ticker = self.set_interval(1 / 60, self.tick)
+        self.music = Playback()
+        self.music.load_file("crystallized.mp3")
+        self.music.play()
+        self.music.seek(start_at)
 
     def elapsed(self) -> float:
-        return perf_counter() - self.start
+        return self.music.curr_pos
 
     def render(self) -> str:
         """Draws the game canvas based off of the current tick."""
