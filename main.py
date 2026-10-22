@@ -5,6 +5,7 @@ from textual.reactive import var
 from textual.containers import Horizontal
 from just_playback import Playback
 from pyfiglet import figlet_format
+from rich.text import Text
 import json
 
 # game settings
@@ -38,10 +39,8 @@ class Canvas(Widget):
 
     def flashHud(self, type: str) -> None:
         self.app.query_one("#hud", Horizontal).add_class(type)
-        self.app.query("#hud Static").add_class(type)
         self.set_timer((0.5 * 60 / bpm), lambda: self.app.query_one("#hud", Horizontal).remove_class(type))
-        self.set_timer((0.5 * 60 / bpm), lambda: self.app.query("#hud Static").remove_class(type))
-    
+        
     def tick(self) -> None:
         now = self.elapsed()
         for note in notes:
@@ -67,13 +66,13 @@ class Canvas(Widget):
             return 0.0
         return self.music.curr_pos
 
-    def render(self) -> str:
+    def render(self) -> Text:
         """Draws the game canvas based off of the current tick."""
         now = self.elapsed()
         lane_width = self.size.width // 4 - 1
         width = lane_width * 4 + 4
         height = self.size.height
-        hit_line = self.size.height - 3
+        hit_line = self.size.height - 5
 
         # build the grid
         grid = [["-"] * width if i == hit_line else [" "] * width for i in range(height)]
@@ -96,7 +95,7 @@ class Canvas(Widget):
 
 
         # return grid as a string
-        return "\n".join("".join(r) for r in grid)
+        return Text("\n".join("".join(r) for r in grid))
 
     def on_key(self, event) -> None:
         now = self.elapsed()
@@ -111,6 +110,7 @@ class Canvas(Widget):
             closest["state"] = "hit"
             self.combo += 1
         else:
+            
             self.flashHud("miss")
             self.misses += 1
             self.combo = 0
@@ -139,14 +139,6 @@ class Game(App):
         width: 1fr;
         text-align: center;
     }
-
-    #hud Static.miss {
-        background: $error;
-    }
-
-    #hud Static.hit {
-            background: $success;
-        }
     """
 
     def compose(self) -> ComposeResult:
