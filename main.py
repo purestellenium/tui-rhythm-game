@@ -13,31 +13,9 @@ import json
 speed = 16.0 * 3
 LANE_KEYS = {"d": 0, "f": 1, "j": 2, "k": 3}
 
-# load chart settings
-chart_path = "crystallized.json"
-with open(f"beatmaps/{chart_path}", 'r') as file:
-    chart = json.load(file)
-
-title = chart.get("title", "Untitled")
-artist = chart.get("artist", "Unknown Artist")
-notes = chart.get("notes", [])
-bpm = chart["bpm"]
-offset = chart.get("offset", 0.0)
-start_at = chart.get("start_at", 0.0)
-song_path = chart.get("song_path")
-
-# convert beatmap to seconds
-
-for note in notes:
-    note["time"] = offset + note["beat"] * 60 / bpm
-    if note["time"] < start_at:
-        note["state"] = "skipped"
-
 class Canvas(Widget):
     music = None
     can_focus = True
-    title = title
-    artist = artist
     hits = 0
     misses = 0
     combo = var(0, init=False)
@@ -56,11 +34,11 @@ class Canvas(Widget):
             self.timeout.stop()
         self.screen.query_one("#hud", Horizontal).remove_class("hit", "miss")
         self.screen.query_one("#hud", Horizontal).add_class(type)
-        self.timeout = self.set_timer((0.5 * 60 / bpm), lambda: self.screen.query_one("#hud", Horizontal).remove_class(type))
+        self.timeout = self.set_timer((0.5 * 60 / self.bpm), lambda: self.screen.query_one("#hud", Horizontal).remove_class(type))
 
     def tick(self) -> None:
         now = self.elapsed()
-        for note in notes:
+        for note in self.notes:
             if note["time"] + 1.5 / speed + 0.12 >= now:
                 break
             if note.get("state") is not None:
@@ -79,11 +57,17 @@ class Canvas(Widget):
         self.refresh()
 
     def on_mount(self) -> None:
+        self.title = self.screen.title
+        self.artist = self.screen.artist
+        self.notes = self.screen.notes
+        self.bpm = self.screen.bpm
+        self.start_at = self.screen.start_at
+        self.song_path = self.screen.song_path
         self.ticker = self.set_interval(1 / 60, self.tick)
         self.music = Playback()
-        self.music.load_file(f"songs/{song_path}")
+        self.music.load_file(f"songs/{self.song_path}")
         self.music.play()
-        self.music.seek(start_at)
+        self.music.seek(self.start_at)
 
     def elapsed(self) -> float:
         if self.music is None:
@@ -102,7 +86,7 @@ class Canvas(Widget):
         grid = [["-"] * width if i == hit_line else [" "] * width for i in range(height)]
 
         # populate the grid
-        for note in notes:
+        for note in self.notes:
             if note["time"] + (height - hit_line + 1) / speed < now or note.get("state") == "hit":
                 continue
             if note["time"] > now + height / speed:
@@ -124,9 +108,9 @@ class Canvas(Widget):
     def on_key(self, event) -> None:
         now = self.elapsed()
         lane = LANE_KEYS.get(event.key)
-        if notes == [] or lane is None:
+        if self.notes == [] or lane is None:
             return
-        closest = min([d for d in notes if d.get("lane") == lane and d.get("state") is None], key=lambda t: abs(t["time"] - now), default=None)
+        closest = min([d for d in self.notes if d.get("lane") == lane and d.get("state") is None], key=lambda t: abs(t["time"] - now), default=None)
         if not closest:
             return
         if abs(closest["time"] - now) <= (1.5 / speed) + 0.12:
@@ -168,12 +152,39 @@ class GameScreen(Screen):
             color: $primary;
         }
         """
-        
+
+    def __init__(self, chart_path: str) -> None:
+            super().__init__()
+            
+            # load chart settings
+            chart_path = "crystallized.json"
+
+            with open(f"beatmaps/{chart_path}", 'r') as file:
+                chart = json.load(file)
+
+            self.title = chart.get("title", "Untitled")
+            self.artist = chart.get("artist", "Unknown Artist")
+            self.notes = chart.get("notes", [])
+            self.bpm = chart["bpm"]
+            self.chart_offset = chart.get("offset", 0.0)
+            self.start_at = chart.get("start_at", 0.0)
+            self.song_path = chart.get("song_path")
+
+            # convert beatmap to seconds
+
+            for note in self.notes:
+                note["time"] = self.chart_offset + note["beat"] * 60 / self.bpm
+                if note["time"] < self.start_at:
+                    note["state"] = "skipped"
+    
     def compose(self) -> ComposeResult:
         yield Canvas()
         with Horizontal(id="hud"):
             yield Static("SCORE: 0", id="score")
             yield Static("COMBO: 0", id="combo")
+
+class MenuScreen(Screen):
+    pass
 
 class ResultsScreen(Screen):
     GRADES = [(1.0, "SS"), (0.95, "S"), (0.90, "A"), (0.80, "B"), (0.70, "C")]
@@ -208,8 +219,9 @@ class ResultsScreen(Screen):
     }
 
     """
-    def __init__(self, title: str, artist: str, score: int, max_combo: int, hits: int, misses: int) -> None:
+    def __init__(self, chart_path: str, title: str, artist: str, score: int, max_combo: int, hits: int, misses: int) -> None:
         super().__init__()
+        self.chart_path = chart_path
         self.title = title
         self.artist = artist
         self.score = score
@@ -231,7 +243,10 @@ class ResultsScreen(Screen):
         ])
 
     def action_retry(self) -> None:
-        self.app.switch_screen(GameScreen())
+        self.app.switch_screen(GameScreen(self.chart_path))
+
+    def action_menu(self) -> None:
+        self.app.switch_screen(MenuScreen())
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="results"):
@@ -247,7 +262,7 @@ class ResultsScreen(Screen):
 class Game(App):
     def on_mount(self) -> None:
         self.theme = "nord"
-        self.push_screen(ResultsScreen(title="crystallized", artist="Camellia", score=1400, max_combo=12, hits=12, misses=0))
+        self.push_screen(ResultsScreen(chart_path="crystallized.json", title="crystallized", artist="Camellia", score=1400, max_combo=12, hits=12, misses=0))
 
 
 if __name__ == "__main__":
