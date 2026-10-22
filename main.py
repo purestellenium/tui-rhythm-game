@@ -35,6 +35,12 @@ class Canvas(Widget):
 
     def watch_combo(self, old: int, new: int) -> None:
         self.app.query_one("#combo", Static).update("COMBO: " + str(self.combo))
+
+    def flashHud(self, type: str) -> None:
+        self.app.query_one("#hud", Horizontal).add_class(type)
+        self.app.query("#hud Static").add_class(type)
+        self.set_timer((0.5 * 60 / bpm), lambda: self.app.query_one("#hud", Horizontal).remove_class(type))
+        self.set_timer((0.5 * 60 / bpm), lambda: self.app.query("#hud Static").remove_class(type))
     
     def tick(self) -> None:
         now = self.elapsed()
@@ -43,6 +49,7 @@ class Canvas(Widget):
                 break
             if note.get("state") is not None:
                 continue
+            self.flashHud("miss")
             note["state"] = "missed"
             self.misses += 1
             self.combo = 0
@@ -100,9 +107,11 @@ class Canvas(Widget):
         if not closest:
             return
         if abs(closest["time"] - now) <= (1.5 / speed) + 0.12:
+            self.flashHud("hit")
             closest["state"] = "hit"
             self.combo += 1
         else:
+            self.flashHud("miss")
             self.misses += 1
             self.combo = 0
         
@@ -115,12 +124,29 @@ class Game(App):
         height: auto;
         align: center top;
         padding: 1;
+        background: $surface;
+    }
+
+    #hud.miss {
+        background: $error;
+    }
+
+    #hud.hit {
+        background: $success;
     }
 
     #hud Static {
         width: 1fr;
         text-align: center;
     }
+
+    #hud Static.miss {
+        background: $error;
+    }
+
+    #hud Static.hit {
+            background: $success;
+        }
     """
 
     def compose(self) -> ComposeResult:
