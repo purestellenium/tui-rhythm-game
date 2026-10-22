@@ -1,8 +1,10 @@
 from textual.app import App, ComposeResult
 from textual.widget import Widget
 from textual.widgets import Static
-from time import perf_counter
+from textual.reactive import var
+from textual.containers import Horizontal
 from just_playback import Playback
+from pyfiglet import figlet_format
 import json
 
 # game settings
@@ -15,19 +17,25 @@ with open('crystallized.json', 'r') as file:
 
 notes = chart["notes"]
 bpm = chart["bpm"]
-offset = chart["offset"]
-start_at = chart["start_at"]
+offset = chart.get("offset", 0.0)
+start_at = chart.get("start_at", 0.0)
 
 # convert beatmap to seconds
 
 for note in notes:
     note["time"] = offset + note["beat"] * 60 / bpm
+    if note["time"] < start_at:
+        note["state"] = "skipped"
 
 class Canvas(Widget):
     music = None
     can_focus = True
     misses = 0
+    combo = var(0, init=False)
 
+    def watch_combo(self, old: int, new: int) -> None:
+        self.app.query_one("#combo", Static).update("COMBO: " + str(self.combo))
+    
     def tick(self) -> None:
         now = self.elapsed()
         for note in notes:
@@ -37,10 +45,10 @@ class Canvas(Widget):
                 continue
             note["state"] = "missed"
             self.misses += 1
+            self.combo = 0
         self.refresh()
 
     def on_mount(self) -> None:
-        self.start = perf_counter()
         self.ticker = self.set_interval(1 / 60, self.tick)
         self.music = Playback()
         self.music.load_file("crystallized.mp3")
@@ -93,17 +101,33 @@ class Canvas(Widget):
             return
         if abs(closest["time"] - now) <= (1.5 / speed) + 0.12:
             closest["state"] = "hit"
+            self.combo += 1
+        else:
+            self.misses += 1
+            self.combo = 0
         
 
 
 class Game(App):
     CSS = """
-    #hud { dock: top; height: 1; }
+    #hud {
+        dock: top;
+        height: auto;
+        align: center top;
+        padding: 1;
+    }
+
+    #hud Static {
+        width: 1fr;
+        text-align: center;
+    }
     """
 
     def compose(self) -> ComposeResult:
         yield Canvas()
-        yield Static(id="hud")
+        with Horizontal(id="hud"):
+            yield Static("SCORE: 0", id="score")
+            yield Static("COMBO: 0", id="combo")
 
 
 if __name__ == "__main__":
