@@ -3,32 +3,20 @@ from textual.widget import Widget
 from textual.widgets import Static
 from time import perf_counter
 from just_playback import Playback
+import json
 
 # game settings
 speed = 16.0 * 3
 LANE_KEYS = {"d": 0, "f": 1, "j": 2, "k": 3}
 
-# chart settings
-notes = [
-    {"beat": 0, "lane": 0}, {"beat": 1, "lane": 1}, {"beat": 2, "lane": 2}, {"beat": 3, "lane": 3},
-    {"beat": 4, "lane": 3}, {"beat": 5, "lane": 2}, {"beat": 6, "lane": 1}, {"beat": 7, "lane": 0},
+# load chart settings
+with open('crystallized.json', 'r') as file:
+    chart = json.load(file)
 
-    {"beat": 8, "lane": 0}, {"beat": 8, "lane": 3},
-    {"beat": 9, "lane": 1}, {"beat": 9, "lane": 2},
-    {"beat": 10, "lane": 0}, {"beat": 10, "lane": 3},
-    {"beat": 11, "lane": 1}, {"beat": 11, "lane": 2},
-
-    {"beat": 12, "lane": 0}, {"beat": 12.5, "lane": 1}, {"beat": 13, "lane": 2}, {"beat": 13.5, "lane": 3},
-    {"beat": 14, "lane": 2}, {"beat": 14.5, "lane": 1}, {"beat": 15, "lane": 0},
-
-    {"beat": 16, "lane": 1}, {"beat": 16.5, "lane": 2}, {"beat": 17, "lane": 1}, {"beat": 17.5, "lane": 2},
-
-    {"beat": 19, "lane": 0}, {"beat": 19, "lane": 1}, {"beat": 19, "lane": 2}, {"beat": 19, "lane": 3},
-]
-
-bpm = 174
-offset = 9.0
-start_at = 5.0
+notes = chart["notes"]
+bpm = chart["bpm"]
+offset = chart["offset"]
+start_at = chart["start_at"]
 
 # convert beatmap to seconds
 
@@ -36,7 +24,7 @@ for note in notes:
     note["time"] = offset + note["beat"] * 60 / bpm
 
 class Canvas(Widget):
-    start = 0.0
+    music = None
     can_focus = True
     misses = 0
 
@@ -60,6 +48,8 @@ class Canvas(Widget):
         self.music.seek(start_at)
 
     def elapsed(self) -> float:
+        if self.music is None:
+            return 0.0
         return self.music.curr_pos
 
     def render(self) -> str:
@@ -98,7 +88,7 @@ class Canvas(Widget):
         lane = LANE_KEYS.get(event.key)
         if notes == [] or lane is None:
             return
-        closest = min([d for d in notes if d.get("lane") == lane and d.get("state") != "hit"], key=lambda t: abs(t["time"] - now), default=None)
+        closest = min([d for d in notes if d.get("lane") == lane and d.get("state") is None], key=lambda t: abs(t["time"] - now), default=None)
         if not closest:
             return
         if abs(closest["time"] - now) <= (1.5 / speed) + 0.12:
