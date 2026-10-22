@@ -1,12 +1,13 @@
 from textual.app import App, ComposeResult
 from textual.widget import Widget
-from textual.widgets import Static, Digits, Footer, DataTable
+from textual.widgets import Static, Digits, Footer, DataTable, OptionList
 from textual.reactive import var
 from textual.containers import Horizontal, Vertical
 from textual.screen import Screen
 from just_playback import Playback
 from pyfiglet import figlet_format
 from rich.text import Text
+from glob import glob
 import json
 
 # game settings
@@ -15,6 +16,7 @@ LANE_KEYS = {"d": 0, "f": 1, "j": 2, "k": 3}
 
 class Canvas(Widget):
     music = None
+    notes = []
     can_focus = True
     hits = 0
     misses = 0
@@ -49,7 +51,10 @@ class Canvas(Widget):
             self.max_combo = max(self.combo, self.max_combo)
             self.combo = 0
         if not self.music.active:
+            self.ticker.stop()
+            self.max_combo = max(self.combo, self.max_combo)
             self.app.switch_screen(ResultsScreen(
+                chart_path=self.screen.chart_path,
                 title=self.title, artist=self.artist,
                 score=self.score, max_combo=self.max_combo,
                 hits=self.hits, misses=self.misses,
@@ -157,11 +162,11 @@ class GameScreen(Screen):
             super().__init__()
             
             # load chart settings
-            chart_path = "crystallized.json"
 
-            with open(f"beatmaps/{chart_path}", 'r') as file:
+            with open(chart_path, 'r') as file:
                 chart = json.load(file)
 
+            self.chart_path = chart_path
             self.title = chart.get("title", "Untitled")
             self.artist = chart.get("artist", "Unknown Artist")
             self.notes = chart.get("notes", [])
@@ -184,7 +189,36 @@ class GameScreen(Screen):
             yield Static("COMBO: 0", id="combo")
 
 class MenuScreen(Screen):
-    pass
+    BINDINGS = []
+    CSS = """
+    #songlist {
+        width: 1fr;
+    }
+
+    #preview {
+        width: 2fr;
+    }
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.song_paths = glob("beatmaps/*.json")
+        self.songlist = []
+        for path in self.song_paths:
+            with open(path, 'r') as file:
+                temp = json.load(file)
+            self.songlist.append({"path": path, "display": "[italic]" + temp.get("title", "Untitled") + "[/italic] - [bold]" + temp.get("artist", "Unknown Artist") + "[/bold]"})
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        self.app.switch_screen(GameScreen(self.songlist[event.option_index]["path"]))
+
+    def compose(self) -> ComposeResult:
+            with Horizontal(id="menu"):
+                yield OptionList(*[d.get("display") for d in self.songlist], id="songlist")
+                with Vertical(id="preview"):
+                    yield Static()
+                    yield DataTable()
+            yield Footer()
 
 class ResultsScreen(Screen):
     GRADES = [(1.0, "SS"), (0.95, "S"), (0.90, "A"), (0.80, "B"), (0.70, "C")]
@@ -203,7 +237,6 @@ class ResultsScreen(Screen):
         align: center middle;
         width: 1fr;
         padding: 1;
-        align-horizontal: center;
     }
 
     #score_container > * {
@@ -234,7 +267,7 @@ class ResultsScreen(Screen):
             self.accuracy = hits / (hits + misses)
 
     def on_mount(self) -> None:
-        table = self.query_one("#stats_container", Vertical).query_one("#stats", DataTable)
+        table = self.query_one("#stats", DataTable)
         table.add_columns("stat", "value")
         table.add_rows([
             ("Hits", str(self.hits)),
@@ -262,7 +295,7 @@ class ResultsScreen(Screen):
 class Game(App):
     def on_mount(self) -> None:
         self.theme = "nord"
-        self.push_screen(ResultsScreen(chart_path="crystallized.json", title="crystallized", artist="Camellia", score=1400, max_combo=12, hits=12, misses=0))
+        self.push_screen(MenuScreen())
 
 
 if __name__ == "__main__":
