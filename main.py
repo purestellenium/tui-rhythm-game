@@ -1,10 +1,11 @@
 from textual.app import App, ComposeResult
 from textual.widget import Widget
-from textual.widgets import Static
+from textual.widgets import Static, Digits, Footer, DataTable
 from textual.reactive import var
-from textual.containers import Horizontal
+from textual.containers import Horizontal, Vertical
 from textual.screen import Screen
 from just_playback import Playback
+from pyfiglet import figlet_format
 from rich.text import Text
 import json
 
@@ -13,13 +14,17 @@ speed = 16.0 * 3
 LANE_KEYS = {"d": 0, "f": 1, "j": 2, "k": 3}
 
 # load chart settings
-with open('crystallized.json', 'r') as file:
+chart_path = "crystallized.json"
+with open(f"beatmaps/{chart_path}", 'r') as file:
     chart = json.load(file)
 
-notes = chart.get("notes")
-bpm = chart.get("bpm")
+title = chart.get("title", "Untitled")
+artist = chart.get("artist", "Unknown Artist")
+notes = chart.get("notes", [])
+bpm = chart["bpm"]
 offset = chart.get("offset", 0.0)
 start_at = chart.get("start_at", 0.0)
+song_path = chart.get("song_path")
 
 # convert beatmap to seconds
 
@@ -31,8 +36,12 @@ for note in notes:
 class Canvas(Widget):
     music = None
     can_focus = True
+    title = title
+    artist = artist
+    hits = 0
     misses = 0
     combo = var(0, init=False)
+    max_combo = 0
     score = var(0, init=False)
     timeout = None
 
@@ -59,13 +68,20 @@ class Canvas(Widget):
             self.flashHud("miss")
             note["state"] = "missed"
             self.misses += 1
+            self.max_combo = max(self.combo, self.max_combo)
             self.combo = 0
+        if not self.music.active:
+            self.app.switch_screen(ResultsScreen(
+                title=self.title, artist=self.artist,
+                score=self.score, max_combo=self.max_combo,
+                hits=self.hits, misses=self.misses,
+            ))
         self.refresh()
 
     def on_mount(self) -> None:
         self.ticker = self.set_interval(1 / 60, self.tick)
         self.music = Playback()
-        self.music.load_file("crystallized.mp3")
+        self.music.load_file(f"songs/{song_path}")
         self.music.play()
         self.music.seek(start_at)
 
@@ -116,11 +132,13 @@ class Canvas(Widget):
         if abs(closest["time"] - now) <= (1.5 / speed) + 0.12:
             self.flashHud("hit")
             closest["state"] = "hit"
+            self.hits += 1
             self.combo += 1
             self.score += (100 * min(self.combo // 10 + 1, 4))
         else:
             self.flashHud("miss")
             self.misses += 1
+            self.max_combo = max(self.combo, self.max_combo)
             self.combo = 0
         
 class GameScreen(Screen):
@@ -157,11 +175,79 @@ class GameScreen(Screen):
             yield Static("SCORE: 0", id="score")
             yield Static("COMBO: 0", id="combo")
 
+class ResultsScreen(Screen):
+    GRADES = [(1.0, "SS"), (0.95, "S"), (0.90, "A"), (0.80, "B"), (0.70, "C")]
+    BINDINGS = [
+        ("escape", "menu", "Menu"),
+        ("r", "retry", "Retry"),
+    ]
+    CSS = """
+    #stats_container {
+        width: 2fr;
+        margin: 1;
+        align: center middle;
+    }
+
+    #score_container {
+        align: center middle;
+        width: 1fr;
+        padding: 1;
+        align-horizontal: center;
+    }
+
+    #score_container > * {
+        width: auto;
+    }
+
+    #stats, #song {
+        margin: 1;
+    }
+
+    #score {
+        text-style: bold;
+    }
+
+    """
+    def __init__(self, title: str, artist: str, score: int, max_combo: int, hits: int, misses: int) -> None:
+        super().__init__()
+        self.title = title
+        self.artist = artist
+        self.score = score
+        self.max_combo = max_combo
+        self.hits = hits
+        self.misses = misses
+        if hits + misses == 0:
+            self.accuracy = 0
+        else:
+            self.accuracy = hits / (hits + misses)
+
+    def on_mount(self) -> None:
+        table = self.query_one("#stats_container", Vertical).query_one("#stats", DataTable)
+        table.add_columns("stat", "value")
+        table.add_rows([
+            ("Hits", str(self.hits)),
+            ("Misses", str(self.misses)),
+            ("Max Combo", str(self.max_combo))
+        ])
+
+    def action_retry(self) -> None:
+        self.app.switch_screen(GameScreen())
+
+    def compose(self) -> ComposeResult:
+        with Horizontal(id="results"):
+            with Vertical(id="score_container"):
+                yield Static(figlet_format(next((letter for cutoff, letter in self.GRADES if self.accuracy >= cutoff), "D"), font="ansi_regular"))
+                yield Digits(str(self.score), id="score")
+            with Vertical(id="stats_container"):
+                yield Static("[italic]" + self.title + "[/italic] - [bold]" + self.artist + "[/bold]", id="song")
+                yield DataTable(id="stats", show_header=False, zebra_stripes=True, cursor_type="none")
+        yield Footer()
+            
 
 class Game(App):
     def on_mount(self) -> None:
         self.theme = "nord"
-        self.push_screen(GameScreen())
+        self.push_screen(ResultsScreen(title="crystallized", artist="Camellia", score=1400, max_combo=12, hits=12, misses=0))
 
 
 if __name__ == "__main__":
