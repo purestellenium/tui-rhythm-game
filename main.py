@@ -7,6 +7,7 @@ from textual.screen import Screen
 from just_playback import Playback
 from pyfiglet import figlet_format
 from rich.text import Text
+from rich_pixels import Pixels
 from glob import glob
 import json
 
@@ -70,7 +71,7 @@ class Canvas(Widget):
         self.song_path = self.screen.song_path
         self.ticker = self.set_interval(1 / 60, self.tick)
         self.music = Playback()
-        self.music.load_file(f"songs/{self.song_path}")
+        self.music.load_file(f"assets/{self.song_path}")
         self.music.play()
         self.music.seek(self.start_at)
 
@@ -168,6 +169,7 @@ class GameScreen(Screen):
 
             self.chart_path = chart_path
             self.title = chart.get("title", "Untitled")
+
             self.artist = chart.get("artist", "Unknown Artist")
             self.notes = chart.get("notes", [])
             self.bpm = chart["bpm"]
@@ -193,10 +195,16 @@ class MenuScreen(Screen):
     CSS = """
     #songlist {
         width: 1fr;
+        height: 100%;
     }
 
     #preview {
         width: 2fr;
+        height: 100%;
+        align: center middle;
+    }
+
+    #cover {
     }
     """
 
@@ -207,16 +215,23 @@ class MenuScreen(Screen):
         for path in self.song_paths:
             with open(path, 'r') as file:
                 temp = json.load(file)
-            self.songlist.append({"path": path, "display": "[italic]" + temp.get("title", "Untitled") + "[/italic] - [bold]" + temp.get("artist", "Unknown Artist") + "[/bold]"})
+            self.songlist.append({"path": path, "display": "[italic]" + temp.get("title", "Untitled") + "[/italic] - [bold]" + temp.get("artist", "Unknown Artist") + "[/bold]", "cover_path": temp.get("cover_path", None)})
 
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         self.app.switch_screen(GameScreen(self.songlist[event.option_index]["path"]))
+
+    def on_option_list_option_highlighted(self, event: OptionList.OptionHighlighted) -> None:
+        if self.songlist[event.option_index]["cover_path"] is not None:
+            cover_pixels = Pixels.from_image_path(f"assets/{self.songlist[event.option_index]["cover_path"]}", resize=(32, 32))
+            self.query_one("#cover", Static).update(cover_pixels)
+        else:
+            self.query_one("#cover", Static).update()
 
     def compose(self) -> ComposeResult:
             with Horizontal(id="menu"):
                 yield OptionList(*[d.get("display") for d in self.songlist], id="songlist")
                 with Vertical(id="preview"):
-                    yield Static()
+                    yield Static(id="cover")
                     yield DataTable()
             yield Footer()
 
