@@ -3,8 +3,8 @@ from textual.widget import Widget
 from textual.widgets import Static
 from textual.reactive import var
 from textual.containers import Horizontal
+from textual.screen import Screen
 from just_playback import Playback
-from pyfiglet import figlet_format
 from rich.text import Text
 import json
 
@@ -16,8 +16,8 @@ LANE_KEYS = {"d": 0, "f": 1, "j": 2, "k": 3}
 with open('crystallized.json', 'r') as file:
     chart = json.load(file)
 
-notes = chart["notes"]
-bpm = chart["bpm"]
+notes = chart.get("notes")
+bpm = chart.get("bpm")
 offset = chart.get("offset", 0.0)
 start_at = chart.get("start_at", 0.0)
 
@@ -33,14 +33,22 @@ class Canvas(Widget):
     can_focus = True
     misses = 0
     combo = var(0, init=False)
+    score = var(0, init=False)
+    timeout = None
 
     def watch_combo(self, old: int, new: int) -> None:
-        self.app.query_one("#combo", Static).update("COMBO: " + str(self.combo))
+        self.screen.query_one("#combo", Static).update("COMBO: " + str(self.combo))
+
+    def watch_score(self, old: int, new: int) -> None:
+        self.screen.query_one("#score", Static).update("SCORE: " + str(self.score))
 
     def flashHud(self, type: str) -> None:
-        self.app.query_one("#hud", Horizontal).add_class(type)
-        self.set_timer((0.5 * 60 / bpm), lambda: self.app.query_one("#hud", Horizontal).remove_class(type))
-        
+        if self.timeout is not None:
+            self.timeout.stop()
+        self.screen.query_one("#hud", Horizontal).remove_class("hit", "miss")
+        self.screen.query_one("#hud", Horizontal).add_class(type)
+        self.timeout = self.set_timer((0.5 * 60 / bpm), lambda: self.screen.query_one("#hud", Horizontal).remove_class(type))
+
     def tick(self) -> None:
         now = self.elapsed()
         for note in notes:
@@ -109,43 +117,51 @@ class Canvas(Widget):
             self.flashHud("hit")
             closest["state"] = "hit"
             self.combo += 1
+            self.score += (100 * min(self.combo // 10 + 1, 4))
         else:
-            
             self.flashHud("miss")
             self.misses += 1
             self.combo = 0
         
-
-
-class Game(App):
+class GameScreen(Screen):
     CSS = """
-    #hud {
-        dock: top;
-        height: auto;
-        align: center top;
-        padding: 1;
-        background: $surface;
-    }
-
-    #hud.miss {
-        background: $error;
-    }
-
-    #hud.hit {
-        background: $success;
-    }
-
-    #hud Static {
-        width: 1fr;
-        text-align: center;
-    }
-    """
-
+        #hud {
+            dock: top;
+            height: auto;
+            align: center top;
+            padding: 1;
+            background: $surface;
+        }
+    
+        #hud.miss {
+            background: $error;
+        }
+    
+        #hud.hit {
+            background: $success;
+        }
+    
+        #hud Static {
+            width: 1fr;
+            text-align: center;
+        }
+    
+        Canvas {
+            color: $primary;
+        }
+        """
+        
     def compose(self) -> ComposeResult:
         yield Canvas()
         with Horizontal(id="hud"):
             yield Static("SCORE: 0", id="score")
             yield Static("COMBO: 0", id="combo")
+
+
+class Game(App):
+    def on_mount(self) -> None:
+        self.theme = "nord"
+        self.push_screen(GameScreen())
 
 
 if __name__ == "__main__":
