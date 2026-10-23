@@ -7,6 +7,18 @@ name = "tui-rhythm-game"
 version = "0.1.0"
 description = "A 4-lane rhythm game for your terminal"
 readme = "README.md"
+license = "MIT AND CC-BY-SA-3.0"
+license-files = ["LICENSE", "CREDITS.md"]
+authors = [{ name = "purestellenium" }]
+keywords = ["rhythm game", "tui", "terminal", "textual", "game"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Topic :: Games/Entertainment",
+]
 requires-python = ">=3.10"
 dependencies = [
     "just_playback>=1.0.0",
@@ -17,15 +29,27 @@ dependencies = [
     "platformdirs>=4.0",
 ]
 
+[project.urls]
+Homepage = "https://github.com/purestellenium/tui-rhythm-game"
+Repository = "https://github.com/purestellenium/tui-rhythm-game"
+Issues = "https://github.com/purestellenium/tui-rhythm-game/issues"
+
 [project.scripts]
 tui-rhythm-game = "tui_rhythm_game.main:main"
 
 [tool.hatch.build]
-# crystallized is copyrighted, so none of its files ship (play it via the user songs folder)
-exclude = ["**/crystallized.*"]
+# songs never ship by default, only the demo songs allowlisted below
+exclude = ["tui_rhythm_game/beatmaps/*", "tui_rhythm_game/assets/*"]
+
+[tool.hatch.build.force-include]
+# demo songs: list every file (chart, audio, cover) as "source" = "path in package"
+# (and credit it in CREDITS.md)
+"tui_rhythm_game/beatmaps/katamari.json" = "tui_rhythm_game/beatmaps/katamari.json"
+"tui_rhythm_game/assets/katamari.mp3" = "tui_rhythm_game/assets/katamari.mp3"
+"tui_rhythm_game/assets/katamari.jpg" = "tui_rhythm_game/assets/katamari.jpg"
 
 [tool.hatch.build.targets.wheel]
 packages = ["tui_rhythm_game"]
 
 [tool.hatch.build.targets.sdist]
-include = ["tui_rhythm_game", "README.md", "requirements.txt"]
+include = ["tui_rhythm_game", "README.md", "requirements.txt", "LICENSE", "CREDITS.md"]

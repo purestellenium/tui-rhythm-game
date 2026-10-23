@@ -1,7 +1,8 @@
 **/.DS_Store
 
-# copyrighted audio, never commit or package
-**/crystallized.mp3
+# songs we don't have redistribution rights for (local copies only)
+**/crystallized.*
+**/nuke_powder.*
 
 # python / build artifacts
 __pycache__/
