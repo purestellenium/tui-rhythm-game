@@ -1,9 +1,12 @@
 from textual.app import App, ComposeResult
 from textual.widget import Widget
-from textual.widgets import Static, Digits, Footer, DataTable, OptionList, TabbedContent, TabPane, Select, Button, Label
+from textual.widgets import Static, Digits, Footer, DataTable, OptionList, TabbedContent, TabPane, Tabs, Button, Label
 from textual.reactive import var
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.screen import Screen
+from textual.screen import Screen, ModalScreen
+from textual.binding import Binding
+from textual.message import Message
+from textual.widgets.option_list import Option
 from just_playback import Playback
 from pyfiglet import figlet_format
 from rich.text import Text
@@ -139,7 +142,35 @@ class Canvas(Widget):
             self.max_combo = max(self.combo, self.max_combo)
             self.combo = 0
         
+class PauseScreen(ModalScreen):
+    BINDINGS = [("escape", "resume", "Resume")]
+    CSS = """
+    PauseScreen {
+        align: center middle;
+        background: $background 60%;
+    }
+
+    #pause_menu {
+        width: 30;
+        height: auto;
+        border: round $primary;
+        border-title-align: center;
+    }
+    """
+
+    def action_resume(self) -> None:
+        self.dismiss("resume")
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        self.dismiss(event.option_id)
+
+    def compose(self) -> ComposeResult:
+        menu = OptionList(Option("Resume", id="resume"), Option("Retry", id="retry"), Option("Quit to menu", id="menu"), id="pause_menu")
+        menu.border_title = "Paused"
+        yield menu
+
 class GameScreen(Screen):
+    BINDINGS = [("escape", "pause", "Pause")]
     CSS = """
         #hud {
             dock: top;
@@ -176,6 +207,7 @@ class GameScreen(Screen):
                 chart = json.load(file)
 
             self.chart_path = chart_path
+            self.app.last_chart = chart_path
             self.title = chart.get("title", "Untitled")
 
             self.artist = chart.get("artist", "Unknown Artist")
@@ -192,14 +224,92 @@ class GameScreen(Screen):
                 if note["time"] < self.start_at:
                     note["state"] = "skipped"
     
+    def action_pause(self) -> None:
+        canvas = self.query_one(Canvas)
+        canvas.music.pause()
+        canvas.ticker.pause()
+        self.app.push_screen(PauseScreen(), self.on_pause_closed)
+
+    def on_pause_closed(self, choice: str) -> None:
+        canvas = self.query_one(Canvas)
+        if choice == "resume":
+            canvas.music.resume()
+            canvas.ticker.resume()
+            return
+        canvas.music.stop()
+        if choice == "retry":
+            self.app.switch_screen(GameScreen(self.chart_path))
+        else:
+            self.app.switch_screen(MenuScreen())
+
     def compose(self) -> ComposeResult:
         yield Canvas()
         with Horizontal(id="hud"):
             yield Static("SCORE: 0", id="score")
             yield Static("COMBO: 0", id="combo")
 
+class Stepper(Widget, can_focus=True):
+    """A value picked with left/right (or by clicking either half)."""
+
+    BINDINGS = [
+        Binding("left", "step(-1)", "Previous", group=Binding.Group("Change")),
+        Binding("right", "step(1)", "Next", group=Binding.Group("Change")),
+    ]
+
+    class Changed(Message):
+        def __init__(self, stepper: "Stepper", value) -> None:
+            super().__init__()
+            self.stepper = stepper
+            self.value = value
+
+    def __init__(self, values: list, value, wrap: bool = False, format=str, id: str | None = None) -> None:
+        super().__init__(id=id, classes="stepper")
+        self.values = values
+        self.wrap = wrap
+        self.format = format
+        # snap to the closest option in case the saved value isn't one of them
+        if value in values:
+            self.index = values.index(value)
+        elif all(isinstance(v, (int, float)) for v in values):
+            self.index = min(range(len(values)), key=lambda i: abs(values[i] - value))
+        else:
+            self.index = 0
+
+    @property
+    def value(self):
+        return self.values[self.index]
+
+    def render(self) -> str:
+        return f"◀ {self.format(self.value)} ▶"
+
+    def action_step(self, delta: int) -> None:
+        if self.wrap:
+            index = (self.index + delta) % len(self.values)
+        else:
+            index = min(max(self.index + delta, 0), len(self.values) - 1)
+        if index != self.index:
+            self.index = index
+            self.refresh()
+            self.post_message(self.Changed(self, self.value))
+
+    def on_click(self, event) -> None:
+        self.action_step(-1 if event.x < self.size.width // 2 else 1)
+
+class SettingsPane(VerticalScroll):
+    """Up/down move between settings rows instead of scrolling."""
+
+    BINDINGS = [
+        Binding("up", "app.focus_previous", "Up", group=Binding.Group("Move")),
+        Binding("down", "app.focus_next", "Down", group=Binding.Group("Move")),
+    ]
+
+class SongList(OptionList):
+    BINDINGS = [Binding("enter", "select", "Play")]
+
 class KeyBindButton(Button):
     """Button for one lane's key. Press it, then press the new key (escape cancels)."""
+
+    BINDINGS = [Binding("enter", "press", "Rebind")]
 
     def __init__(self, lane: int, key: str) -> None:
         super().__init__(id=f"lane_{lane}", classes="keybind")
@@ -210,9 +320,9 @@ class KeyBindButton(Button):
 
     def update_label(self) -> None:
         if self.listening:
-            self.label = f"Lane {self.lane + 1}: press a key..."
+            self.label = "press a key..."
         else:
-            self.label = f"Lane {self.lane + 1}: [bold]{self.key.upper()}[/bold]"
+            self.label = f"[bold]{self.key.upper()}[/bold]"
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         event.stop()
@@ -235,8 +345,15 @@ class KeyBindButton(Button):
         self.update_label()
 
 class MenuScreen(Screen):
-    BINDINGS = []
+    BINDINGS = [
+        Binding("1", "show_tab('songs_tab')", "Songs"),
+        Binding("2", "show_tab('settings_tab')", "Settings"),
+    ]
     CSS = """
+    #menu {
+        margin-bottom: 1;
+    }
+
     #songlist {
         width: 1fr;
         height: 100%;
@@ -257,17 +374,16 @@ class MenuScreen(Screen):
         text-style: bold;
     }
 
-    #theme_select { width: 32; }
-
-    #speed_value {
-        width: 8;
-        padding: 1 0;
-        text-align: center;
+    .stepper {
+        width: 32;
+        height: 3;
+        content-align: center middle;
+        border: tall $border-blurred;
     }
 
-    #speed_down, #speed_up { min-width: 5; }
+    .stepper:focus { border: tall $border; }
 
-    .keybind { margin-right: 1; }
+    .keybind { width: 32; }
 
     #songs_folder { width: 100%; color: $text-muted; }
 
@@ -342,19 +458,31 @@ class MenuScreen(Screen):
         else:
             self.query_one("#cover", Static).update()
 
-    def on_select_changed(self, event: Select.Changed) -> None:
-        if event.select.id != "theme_select" or event.value == Select.BLANK:
-            return
-        self.app.theme = event.value
+    def on_mount(self) -> None:
+        # tabs are switched with 1/2, so the tab bar doesn't need to be a focus stop
+        self.query_one(Tabs).can_focus = False
+        songlist = self.query_one("#songlist", OptionList)
+        # re-select the song that was just played
+        paths = [song["path"] for song in self.songlist]
+        if self.app.last_chart in paths:
+            songlist.highlighted = paths.index(self.app.last_chart)
+        songlist.focus()
 
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id not in ("speed_down", "speed_up"):
-            return
-        step = SPEED_STEP if event.button.id == "speed_up" else -SPEED_STEP
-        speed = min(max(self.app.settings["speed"] + step, SPEED_MIN), SPEED_MAX)
-        self.app.settings["speed"] = speed
-        save_settings(self.app.settings)
-        self.query_one("#speed_value", Label).update(f"{speed:.1f}")
+    def action_show_tab(self, tab: str) -> None:
+        self.query_one(TabbedContent).active = tab
+
+    def on_tabbed_content_tab_activated(self, event: TabbedContent.TabActivated) -> None:
+        if event.pane.id == "songs_tab":
+            self.query_one("#songlist").focus()
+        else:
+            self.query_one("#theme_setting").focus()
+
+    def on_stepper_changed(self, event: Stepper.Changed) -> None:
+        if event.stepper.id == "theme_setting":
+            self.app.theme = event.value
+        elif event.stepper.id == "speed_setting":
+            self.app.settings["speed"] = event.value
+            save_settings(self.app.settings)
 
     def rebind_lane(self, button: KeyBindButton, key: str) -> None:
         keys = self.app.settings["lane_keys"]
@@ -369,23 +497,21 @@ class MenuScreen(Screen):
             with TabbedContent():
                 with TabPane("Songs", id="songs_tab"):
                     with Horizontal(id="menu"):
-                        yield OptionList(*[d.get("display") for d in self.songlist], id="songlist")
+                        yield SongList(*[d.get("display") for d in self.songlist], id="songlist")
                         with Vertical(id="preview"):
                             yield Static(id="cover")
                 with TabPane("Settings", id="settings_tab"):
-                    with VerticalScroll(id="settings"):
+                    with SettingsPane(id="settings", can_focus=False):
                         with Horizontal(classes="setting"):
                             yield Label("Theme", classes="setting-name")
-                            themes = sorted(self.app.available_themes)
-                            yield Select([(name, name) for name in themes], value=self.app.theme, allow_blank=False, id="theme_select")
+                            yield Stepper(sorted(self.app.available_themes), self.app.theme, wrap=True, id="theme_setting")
                         with Horizontal(classes="setting"):
                             yield Label("Scroll speed", classes="setting-name")
-                            yield Button("-", id="speed_down")
-                            yield Label(f"{self.app.settings['speed']:.1f}", id="speed_value")
-                            yield Button("+", id="speed_up")
-                        with Horizontal(classes="setting"):
-                            yield Label("Lane keys", classes="setting-name")
-                            for lane, key in enumerate(self.app.settings["lane_keys"]):
+                            speeds = [SPEED_MIN + i * SPEED_STEP for i in range(int((SPEED_MAX - SPEED_MIN) / SPEED_STEP) + 1)]
+                            yield Stepper(speeds, self.app.settings["speed"], format=lambda v: f"{v:.1f}", id="speed_setting")
+                        for lane, key in enumerate(self.app.settings["lane_keys"]):
+                            with Horizontal(classes="setting"):
+                                yield Label(f"Lane {lane + 1} key", classes="setting-name")
                                 yield KeyBindButton(lane, key)
                         yield Label(f"Custom songs folder: {USER_DIR}\n(charts go in beatmaps/, audio + covers in assets/)", id="songs_folder")
             yield Footer()
@@ -393,7 +519,8 @@ class MenuScreen(Screen):
 class ResultsScreen(Screen):
     GRADES = [(1.0, "SS"), (0.95, "S"), (0.90, "A"), (0.80, "B"), (0.70, "C")]
     BINDINGS = [
-        ("escape", "menu", "Menu"),
+        Binding("escape", "menu", "Menu", group=Binding.Group("Menu")),
+        Binding("enter", "menu", "Menu", group=Binding.Group("Menu")),
         ("r", "retry", "Retry"),
     ]
     CSS = """
@@ -458,11 +585,16 @@ class ResultsScreen(Screen):
                 yield Digits(str(self.score), id="score")
             with Vertical(id="stats_container"):
                 yield Static("[italic]" + self.title + "[/italic] - [bold]" + self.artist + "[/bold]", id="song")
-                yield DataTable(id="stats", show_header=False, zebra_stripes=True, cursor_type="none")
+                table = DataTable(id="stats", show_header=False, zebra_stripes=True, cursor_type="none")
+                # display only, so it shouldn't take focus (or swallow enter)
+                table.can_focus = False
+                yield table
         yield Footer()
             
 
 class Game(App):
+    last_chart = None
+
     def on_mount(self) -> None:
         ensure_user_dirs()
         self.settings = load_settings()
