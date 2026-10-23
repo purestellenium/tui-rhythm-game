@@ -1,8 +1,8 @@
 from textual.app import App, ComposeResult
 from textual.widget import Widget
-from textual.widgets import Static, Digits, Footer, DataTable, OptionList
+from textual.widgets import Static, Digits, Footer, DataTable, OptionList, TabbedContent, TabPane, Select, Button, Label
 from textual.reactive import var
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import Screen
 from just_playback import Playback
 from pyfiglet import figlet_format
@@ -10,16 +10,20 @@ from rich.text import Text
 from rich_pixels import Pixels
 from PIL import Image
 from textual.color import Color
-from glob import glob
+from pathlib import Path
 import json
 
-# game settings
-speed = 12.0 * 4.0
-LANE_KEYS = {"d": 0, "f": 1, "j": 2, "k": 3}
+from tui_rhythm_game.settings import PACKAGE_DIR, USER_DIR, SPEED_MIN, SPEED_MAX, SPEED_STEP, DEFAULTS, ensure_user_dirs, load_settings, save_settings
+
+def assets_dir(chart_path: str) -> Path:
+    """Charts live in <root>/beatmaps/, so their audio + covers live in <root>/assets/."""
+    return Path(chart_path).parent.parent / "assets"
 
 class Canvas(Widget):
     music = None
     notes = []
+    speed = DEFAULTS["speed"] * 4.0
+    lane_keys = {}
     can_focus = True
     hits = 0
     misses = 0
@@ -44,7 +48,7 @@ class Canvas(Widget):
     def tick(self) -> None:
         now = self.elapsed()
         for note in self.notes:
-            if note["time"] + 1.5 / speed + 0.12 >= now:
+            if note["time"] + 1.5 / self.speed + 0.12 >= now:
                 break
             if note.get("state") is not None:
                 continue
@@ -71,9 +75,11 @@ class Canvas(Widget):
         self.bpm = self.screen.bpm
         self.start_at = self.screen.start_at
         self.song_path = self.screen.song_path
+        self.speed = self.app.settings["speed"] * 4.0
+        self.lane_keys = {key: lane for lane, key in enumerate(self.app.settings["lane_keys"])}
         self.ticker = self.set_interval(1 / 60, self.tick)
         self.music = Playback()
-        self.music.load_file(f"assets/{self.song_path}")
+        self.music.load_file(str(assets_dir(self.screen.chart_path) / self.song_path))
         self.music.play()
         self.music.seek(self.start_at)
 
@@ -95,12 +101,12 @@ class Canvas(Widget):
 
         # populate the grid
         for note in self.notes:
-            if note["time"] + (height - hit_line + 1) / speed < now or note.get("state") == "hit":
+            if note["time"] + (height - hit_line + 1) / self.speed < now or note.get("state") == "hit":
                 continue
-            if note["time"] > now + height / speed:
+            if note["time"] > now + height / self.speed:
                 break
             # calculate what height to draw the note
-            note_height = int(round(hit_line - (note["time"] - now) * speed))
+            note_height = int(round(hit_line - (note["time"] - now) * self.speed))
             # note is drawn on the note_height + 1 above + 1 below
             # get index for the first X of the note
             i = note["lane"] * (lane_width + 1)
@@ -115,13 +121,13 @@ class Canvas(Widget):
 
     def on_key(self, event) -> None:
         now = self.elapsed()
-        lane = LANE_KEYS.get(event.key)
+        lane = self.lane_keys.get(event.key)
         if self.notes == [] or lane is None:
             return
         closest = min([d for d in self.notes if d.get("lane") == lane and d.get("state") is None], key=lambda t: abs(t["time"] - now), default=None)
         if not closest:
             return
-        if abs(closest["time"] - now) <= (1.5 / speed) + 0.12:
+        if abs(closest["time"] - now) <= (1.5 / self.speed) + 0.12:
             self.flashHud("hit")
             closest["state"] = "hit"
             self.hits += 1
@@ -192,6 +198,42 @@ class GameScreen(Screen):
             yield Static("SCORE: 0", id="score")
             yield Static("COMBO: 0", id="combo")
 
+class KeyBindButton(Button):
+    """Button for one lane's key. Press it, then press the new key (escape cancels)."""
+
+    def __init__(self, lane: int, key: str) -> None:
+        super().__init__(id=f"lane_{lane}", classes="keybind")
+        self.lane = lane
+        self.key = key
+        self.listening = False
+        self.update_label()
+
+    def update_label(self) -> None:
+        if self.listening:
+            self.label = f"Lane {self.lane + 1}: press a key..."
+        else:
+            self.label = f"Lane {self.lane + 1}: [bold]{self.key.upper()}[/bold]"
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.listening = True
+        self.update_label()
+
+    def on_blur(self) -> None:
+        self.listening = False
+        self.update_label()
+
+    def on_key(self, event) -> None:
+        if not self.listening:
+            return
+        # swallow the key so it doesn't trigger bindings (tab, enter, etc.)
+        event.stop()
+        event.prevent_default()
+        self.listening = False
+        if event.key != "escape":
+            self.screen.rebind_lane(self, event.key)
+        self.update_label()
+
 class MenuScreen(Screen):
     BINDINGS = []
     CSS = """
@@ -199,6 +241,35 @@ class MenuScreen(Screen):
         width: 1fr;
         height: 100%;
     }
+
+    #settings {
+        padding: 1 2;
+    }
+
+    #settings .setting {
+        height: auto;
+        margin-bottom: 1;
+    }
+
+    #settings .setting-name {
+        width: 16;
+        padding: 1 0;
+        text-style: bold;
+    }
+
+    #theme_select { width: 32; }
+
+    #speed_value {
+        width: 8;
+        padding: 1 0;
+        text-align: center;
+    }
+
+    #speed_down, #speed_up { min-width: 5; }
+
+    .keybind { margin-right: 1; }
+
+    #songs_folder { width: 100%; color: $text-muted; }
 
     #preview {
         width: 2fr;
@@ -214,8 +285,8 @@ class MenuScreen(Screen):
     #cover { width: 48; height: 24; margin: 1; }
     """
 
-    def cover_color(self, path: str) -> Color:
-        r, g, b = Image.open(f"assets/{path}").convert("RGB").resize((1, 1)).getpixel((0, 0))
+    def cover_color(self, path: Path) -> Color:
+        r, g, b = Image.open(path).convert("RGB").resize((1, 1)).getpixel((0, 0))
         color = Color(r, g, b)
         if color.brightness < 0.4:
             color = color.lighten(0.3)
@@ -227,17 +298,33 @@ class MenuScreen(Screen):
 
     def __init__(self):
         super().__init__()
-        self.song_paths = sorted(glob("beatmaps/*.json"))
+        # bundled songs first, then any the user dropped into their songs folder
+        self.song_paths = sorted((PACKAGE_DIR / "beatmaps").glob("*.json")) + sorted((USER_DIR / "beatmaps").glob("*.json"))
         self.songlist = []
         for path in self.song_paths:
-            with open(path, 'r') as file:
-                temp = json.load(file)
-            self.songlist.append({"path": path, "display": "[italic]" + temp.get("title", "Untitled") + "[/italic] - [bold]" + temp.get("artist", "Unknown Artist") + "[/bold]", "cover_path": temp.get("cover_path", None), "title": temp.get("title", "Untitled"), "artist": temp.get("artist", "Unknown Artist"), "bpm": temp.get("bpm")})
-            if self.songlist[-1]["cover_path"] is not None:
-                self.songlist[-1]["color"] = self.cover_color(self.songlist[-1]["cover_path"])
+            try:
+                with open(path, 'r') as file:
+                    temp = json.load(file)
+            except (OSError, ValueError):
+                continue
+            song_assets = assets_dir(path)
+            playable = temp.get("song_path") is not None and (song_assets / temp["song_path"]).is_file()
+            display = "[italic]" + temp.get("title", "Untitled") + "[/italic] - [bold]" + temp.get("artist", "Unknown Artist") + "[/bold]"
+            if not playable:
+                display = "[dim]" + display + " (audio missing)[/dim]"
+            cover_path = None
+            if temp.get("cover_path") is not None and (song_assets / temp["cover_path"]).is_file():
+                cover_path = song_assets / temp["cover_path"]
+            self.songlist.append({"path": str(path), "display": display, "playable": playable, "song_path": temp.get("song_path"), "cover_path": cover_path, "title": temp.get("title", "Untitled"), "artist": temp.get("artist", "Unknown Artist"), "bpm": temp.get("bpm")})
+            if cover_path is not None:
+                self.songlist[-1]["color"] = self.cover_color(cover_path)
 
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
-        self.app.switch_screen(GameScreen(self.songlist[event.option_index]["path"]))
+        song = self.songlist[event.option_index]
+        if not song["playable"]:
+            self.app.notify(f"Put {song['song_path']} in {USER_DIR / 'assets'} to play this song.", title="Audio missing", severity="error")
+            return
+        self.app.switch_screen(GameScreen(song["path"]))
 
     def on_option_list_option_highlighted(self, event: OptionList.OptionHighlighted) -> None:
         song = self.songlist[event.option_index]
@@ -250,16 +337,57 @@ class MenuScreen(Screen):
             preview.styles.border = ("round", self.app.theme_variables["primary"])
 
         if song['cover_path'] is not None:
-            cover_pixels = Pixels.from_image_path(f"assets/{song["cover_path"]}", resize=(48, 48))
+            cover_pixels = Pixels.from_image_path(song["cover_path"], resize=(48, 48))
             self.query_one("#cover", Static).update(cover_pixels)
         else:
             self.query_one("#cover", Static).update()
 
+    def on_select_changed(self, event: Select.Changed) -> None:
+        if event.select.id != "theme_select" or event.value == Select.BLANK:
+            return
+        self.app.theme = event.value
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id not in ("speed_down", "speed_up"):
+            return
+        step = SPEED_STEP if event.button.id == "speed_up" else -SPEED_STEP
+        speed = min(max(self.app.settings["speed"] + step, SPEED_MIN), SPEED_MAX)
+        self.app.settings["speed"] = speed
+        save_settings(self.app.settings)
+        self.query_one("#speed_value", Label).update(f"{speed:.1f}")
+
+    def rebind_lane(self, button: KeyBindButton, key: str) -> None:
+        keys = self.app.settings["lane_keys"]
+        if key in keys and keys.index(key) != button.lane:
+            self.app.notify(f"{key.upper()} is already bound to lane {keys.index(key) + 1}.", severity="warning")
+            return
+        keys[button.lane] = key
+        button.key = key
+        save_settings(self.app.settings)
+
     def compose(self) -> ComposeResult:
-            with Horizontal(id="menu"):
-                yield OptionList(*[d.get("display") for d in self.songlist], id="songlist")
-                with Vertical(id="preview"):
-                    yield Static(id="cover")
+            with TabbedContent():
+                with TabPane("Songs", id="songs_tab"):
+                    with Horizontal(id="menu"):
+                        yield OptionList(*[d.get("display") for d in self.songlist], id="songlist")
+                        with Vertical(id="preview"):
+                            yield Static(id="cover")
+                with TabPane("Settings", id="settings_tab"):
+                    with VerticalScroll(id="settings"):
+                        with Horizontal(classes="setting"):
+                            yield Label("Theme", classes="setting-name")
+                            themes = sorted(self.app.available_themes)
+                            yield Select([(name, name) for name in themes], value=self.app.theme, allow_blank=False, id="theme_select")
+                        with Horizontal(classes="setting"):
+                            yield Label("Scroll speed", classes="setting-name")
+                            yield Button("-", id="speed_down")
+                            yield Label(f"{self.app.settings['speed']:.1f}", id="speed_value")
+                            yield Button("+", id="speed_up")
+                        with Horizontal(classes="setting"):
+                            yield Label("Lane keys", classes="setting-name")
+                            for lane, key in enumerate(self.app.settings["lane_keys"]):
+                                yield KeyBindButton(lane, key)
+                        yield Label(f"Custom songs folder: {USER_DIR}\n(charts go in beatmaps/, audio + covers in assets/)", id="songs_folder")
             yield Footer()
 
 class ResultsScreen(Screen):
@@ -336,11 +464,25 @@ class ResultsScreen(Screen):
 
 class Game(App):
     def on_mount(self) -> None:
-        self.theme = "nord"
+        ensure_user_dirs()
+        self.settings = load_settings()
+        if self.settings["theme"] not in self.available_themes:
+            self.settings["theme"] = DEFAULTS["theme"]
+        self.theme = self.settings["theme"]
+        # save themes picked anywhere (settings tab or the command palette)
+        self.theme_changed_signal.subscribe(self, self.save_theme)
         self.push_screen(MenuScreen())
 
+    def save_theme(self, theme) -> None:
+        if self.settings["theme"] != theme.name:
+            self.settings["theme"] = theme.name
+            save_settings(self.settings)
 
-if __name__ == "__main__":
+
+def main() -> None:
     game = Game()
 
     game.run()
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,31 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "tui-rhythm-game"
+version = "0.1.0"
+description = "A 4-lane rhythm game for your terminal"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "just_playback>=1.0.0",
+    "pyfiglet>=1.0.4",
+    "textual>=8.2.8,<9",
+    "rich-pixels>=3.0.1",
+    "pillow>=12.1.0",
+    "platformdirs>=4.0",
+]
+
+[project.scripts]
+tui-rhythm-game = "tui_rhythm_game.main:main"
+
+[tool.hatch.build]
+# crystallized is copyrighted, so none of its files ship (play it via the user songs folder)
+exclude = ["**/crystallized.*"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["tui_rhythm_game"]
+
+[tool.hatch.build.targets.sdist]
+include = ["tui_rhythm_game", "README.md", "requirements.txt"]

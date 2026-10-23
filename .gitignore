@@ -1,1 +1,11 @@
 **/.DS_Store
+
+# copyrighted audio, never commit or package
+**/crystallized.mp3
+
+# python / build artifacts
+__pycache__/
+*.egg-info/
+build/
+dist/
+.ruff_cache/
