@@ -16,11 +16,16 @@ from textual.color import Color
 from pathlib import Path
 import json
 
-from tui_rhythm_game.settings import PACKAGE_DIR, USER_DIR, SPEED_MIN, SPEED_MAX, SPEED_STEP, DEFAULTS, ensure_user_dirs, load_settings, save_settings
+from tui_rhythm_game.settings import PACKAGE_DIR, USER_DIR, SPEED_MIN, SPEED_MAX, SPEED_STEP, DEFAULTS, ensure_user_dirs, load_settings, save_settings, score_key, load_scores, save_scores
 
 def assets_dir(chart_path: str) -> Path:
     """Charts live in <root>/beatmaps/, so their audio + covers live in <root>/assets/."""
     return Path(chart_path).parent.parent / "assets"
+
+GRADES = [(1.0, "SS"), (0.95, "S"), (0.90, "A"), (0.80, "B"), (0.70, "C")]
+
+def grade(accuracy: float) -> str:
+    return next((letter for cutoff, letter in GRADES if accuracy >= cutoff), "D")
 
 class Canvas(Widget):
     music = None
@@ -399,6 +404,8 @@ class MenuScreen(Screen):
     #preview > * { width: auto; }
 
     #cover { width: 48; height: 24; margin: 1; }
+
+    #best { margin-bottom: 1; }
     """
 
     def cover_color(self, path: Path) -> Color:
@@ -431,7 +438,7 @@ class MenuScreen(Screen):
             cover_path = None
             if temp.get("cover_path") is not None and (song_assets / temp["cover_path"]).is_file():
                 cover_path = song_assets / temp["cover_path"]
-            self.songlist.append({"path": str(path), "display": display, "playable": playable, "song_path": temp.get("song_path"), "cover_path": cover_path, "title": temp.get("title", "Untitled"), "artist": temp.get("artist", "Unknown Artist"), "bpm": temp.get("bpm")})
+            self.songlist.append({"path": str(path), "best": self.app.scores.get(score_key(path)), "display": display, "playable": playable, "song_path": temp.get("song_path"), "cover_path": cover_path, "title": temp.get("title", "Untitled"), "artist": temp.get("artist", "Unknown Artist"), "bpm": temp.get("bpm")})
             if cover_path is not None:
                 self.songlist[-1]["color"] = self.cover_color(cover_path)
 
@@ -457,6 +464,12 @@ class MenuScreen(Screen):
             self.query_one("#cover", Static).update(cover_pixels)
         else:
             self.query_one("#cover", Static).update()
+
+        best = song["best"]
+        if best is None:
+            self.query_one("#best", Static).update("[dim]Not played yet[/dim]")
+        else:
+            self.query_one("#best", Static).update(f"Best: [bold]{grade(best['accuracy'])}[/bold] · {best['score']} · {best['accuracy']:.1%}")
 
     def on_mount(self) -> None:
         # tabs are switched with 1/2, so the tab bar doesn't need to be a focus stop
@@ -500,6 +513,7 @@ class MenuScreen(Screen):
                         yield SongList(*[d.get("display") for d in self.songlist], id="songlist")
                         with Vertical(id="preview"):
                             yield Static(id="cover")
+                            yield Static(id="best")
                 with TabPane("Settings", id="settings_tab"):
                     with SettingsPane(id="settings", can_focus=False):
                         with Horizontal(classes="setting"):
@@ -517,7 +531,6 @@ class MenuScreen(Screen):
             yield Footer()
 
 class ResultsScreen(Screen):
-    GRADES = [(1.0, "SS"), (0.95, "S"), (0.90, "A"), (0.80, "B"), (0.70, "C")]
     BINDINGS = [
         Binding("escape", "menu", "Menu", group=Binding.Group("Menu")),
         Binding("enter", "menu", "Menu", group=Binding.Group("Menu")),
@@ -562,6 +575,24 @@ class ResultsScreen(Screen):
             self.accuracy = 0
         else:
             self.accuracy = hits / (hits + misses)
+        self.save_best()
+
+    def save_best(self) -> None:
+        """Each best is tracked separately, so a high score run doesn't overwrite a better grade."""
+        key = score_key(self.chart_path)
+        old = self.app.scores.get(key)
+        self.new_score = old is None or self.score > old["score"]
+        self.new_grade = old is None or grade(self.accuracy) != grade(old["accuracy"]) and self.accuracy > old["accuracy"]
+        if old is None:
+            self.best = {"score": self.score, "accuracy": self.accuracy, "max_combo": self.max_combo}
+        else:
+            self.best = {
+                "score": max(self.score, old["score"]),
+                "accuracy": max(self.accuracy, old["accuracy"]),
+                "max_combo": max(self.max_combo, old["max_combo"]),
+            }
+        self.app.scores[key] = self.best
+        save_scores(self.app.scores)
 
     def on_mount(self) -> None:
         table = self.query_one("#stats", DataTable)
@@ -569,7 +600,10 @@ class ResultsScreen(Screen):
         table.add_rows([
             ("Hits", str(self.hits)),
             ("Misses", str(self.misses)),
-            ("Max Combo", str(self.max_combo))
+            ("Max Combo", str(self.max_combo)),
+            ("Accuracy", f"{self.accuracy:.1%}"),
+            ("Best Score", str(self.best["score"]) + (" [bold green]NEW![/bold green]" if self.new_score else "")),
+            ("Best Grade", grade(self.best["accuracy"]) + (" [bold green]NEW![/bold green]" if self.new_grade else "")),
         ])
 
     def action_retry(self) -> None:
@@ -581,7 +615,7 @@ class ResultsScreen(Screen):
     def compose(self) -> ComposeResult:
         with Horizontal(id="results"):
             with Vertical(id="score_container"):
-                yield Static(figlet_format(next((letter for cutoff, letter in self.GRADES if self.accuracy >= cutoff), "D"), font="ansi_regular"))
+                yield Static(figlet_format(grade(self.accuracy), font="ansi_regular"))
                 yield Digits(str(self.score), id="score")
             with Vertical(id="stats_container"):
                 yield Static("[italic]" + self.title + "[/italic] - [bold]" + self.artist + "[/bold]", id="song")
@@ -598,6 +632,7 @@ class Game(App):
     def on_mount(self) -> None:
         ensure_user_dirs()
         self.settings = load_settings()
+        self.scores = load_scores()
         if self.settings["theme"] not in self.available_themes:
             self.settings["theme"] = DEFAULTS["theme"]
         self.theme = self.settings["theme"]

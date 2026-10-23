@@ -45,3 +45,25 @@ def save_settings(settings: dict) -> None:
     SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
     with open(SETTINGS_PATH, 'w') as file:
         json.dump(settings, file, indent=1)
+
+# high scores are play data, so they live next to the user songs instead of in the config folder
+SCORES_PATH = USER_DIR / "scores.json"
+
+def score_key(chart_path) -> str:
+    """Bundled and user charts can share a filename, so key them by where they came from."""
+    path = Path(chart_path)
+    source = "bundled" if path.is_relative_to(PACKAGE_DIR) else "user"
+    return f"{source}/{path.name}"
+
+def load_scores() -> dict:
+    try:
+        with open(SCORES_PATH, 'r') as file:
+            scores = json.load(file)
+    except (OSError, ValueError):
+        return {}
+    return scores if isinstance(scores, dict) else {}
+
+def save_scores(scores: dict) -> None:
+    SCORES_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with open(SCORES_PATH, 'w') as file:
+        json.dump(scores, file, indent=1)
