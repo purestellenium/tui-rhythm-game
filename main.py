@@ -8,6 +8,8 @@ from just_playback import Playback
 from pyfiglet import figlet_format
 from rich.text import Text
 from rich_pixels import Pixels
+from PIL import Image
+from textual.color import Color
 from glob import glob
 import json
 
@@ -202,27 +204,53 @@ class MenuScreen(Screen):
         width: 2fr;
         height: 100%;
         align: center middle;
+        border: round $primary;
+        border-title-align: center;
+        border-subtitle-align: center;
     }
 
-    #cover {
-    }
+    #preview > * { width: auto; }
+
+    #cover { width: 48; height: 24; margin: 1; }
     """
+
+    def cover_color(self, path: str) -> Color:
+        r, g, b = Image.open(f"assets/{path}").convert("RGB").resize((1, 1)).getpixel((0, 0))
+        color = Color(r, g, b)
+        if color.brightness < 0.4:
+            color = color.lighten(0.3)
+        return color
+
+    def format_length(self, seconds: float) -> str:
+        minutes, secs = divmod(int(seconds), 60)
+        return f"{minutes}:{secs:02d}"
 
     def __init__(self):
         super().__init__()
-        self.song_paths = glob("beatmaps/*.json")
+        self.song_paths = sorted(glob("beatmaps/*.json"))
         self.songlist = []
         for path in self.song_paths:
             with open(path, 'r') as file:
                 temp = json.load(file)
-            self.songlist.append({"path": path, "display": "[italic]" + temp.get("title", "Untitled") + "[/italic] - [bold]" + temp.get("artist", "Unknown Artist") + "[/bold]", "cover_path": temp.get("cover_path", None)})
+            self.songlist.append({"path": path, "display": "[italic]" + temp.get("title", "Untitled") + "[/italic] - [bold]" + temp.get("artist", "Unknown Artist") + "[/bold]", "cover_path": temp.get("cover_path", None), "title": temp.get("title", "Untitled"), "artist": temp.get("artist", "Unknown Artist"), "bpm": temp.get("bpm")})
+            if self.songlist[-1]["cover_path"] is not None:
+                self.songlist[-1]["color"] = self.cover_color(self.songlist[-1]["cover_path"])
 
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         self.app.switch_screen(GameScreen(self.songlist[event.option_index]["path"]))
 
     def on_option_list_option_highlighted(self, event: OptionList.OptionHighlighted) -> None:
-        if self.songlist[event.option_index]["cover_path"] is not None:
-            cover_pixels = Pixels.from_image_path(f"assets/{self.songlist[event.option_index]["cover_path"]}", resize=(32, 32))
+        song = self.songlist[event.option_index]
+        preview = self.query_one("#preview", Vertical)
+        preview.border_title = song["title"]
+        preview.border_subtitle = song["artist"]
+        if song.get("color", None) is not None:
+            preview.styles.border = ("round", song["color"])
+        else:
+            preview.styles.border = ("round", self.app.theme_variables["primary"])
+
+        if song['cover_path'] is not None:
+            cover_pixels = Pixels.from_image_path(f"assets/{song["cover_path"]}", resize=(48, 48))
             self.query_one("#cover", Static).update(cover_pixels)
         else:
             self.query_one("#cover", Static).update()
@@ -232,7 +260,6 @@ class MenuScreen(Screen):
                 yield OptionList(*[d.get("display") for d in self.songlist], id="songlist")
                 with Vertical(id="preview"):
                     yield Static(id="cover")
-                    yield DataTable()
             yield Footer()
 
 class ResultsScreen(Screen):
