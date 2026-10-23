@@ -14,7 +14,7 @@ from glob import glob
 import json
 
 # game settings
-speed = 16.0 * 3
+speed = 12.0 * 4.0
 LANE_KEYS = {"d": 0, "f": 1, "j": 2, "k": 3}
 
 class Canvas(Widget):
