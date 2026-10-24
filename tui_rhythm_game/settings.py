@@ -13,10 +13,17 @@ SPEED_MIN = 5.0
 SPEED_MAX = 15.0
 SPEED_STEP = 0.5
 
+# milliseconds the audio reaches your ears late, subtracted from the song position when judging
+OFFSET_MIN = -300
+OFFSET_MAX = 300
+OFFSET_STEP = 5
+
 DEFAULTS = {
     "theme": "nord",
     "speed": 12.0,
     "lane_keys": ["d", "f", "j", "k"],
+    "offset": 0,
+    "no_fail": False,
 }
 
 def ensure_user_dirs() -> None:
@@ -39,6 +46,10 @@ def load_settings() -> dict:
     keys = saved.get("lane_keys")
     if isinstance(keys, list) and len(keys) == 4 and len(set(keys)) == 4 and all(isinstance(k, str) for k in keys):
         settings["lane_keys"] = keys
+    if isinstance(saved.get("offset"), (int, float)):
+        settings["offset"] = min(max(int(saved["offset"]), OFFSET_MIN), OFFSET_MAX)
+    if isinstance(saved.get("no_fail"), bool):
+        settings["no_fail"] = saved["no_fail"]
     return settings
 
 def save_settings(settings: dict) -> None:
